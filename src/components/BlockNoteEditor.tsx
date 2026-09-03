@@ -38,7 +38,8 @@ export default function DocEditor({ initialContent, onChange }: DocEditorProps) 
     return () => {
       isMounted = false;
     };
-  }, [initialContent]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   if (!ready) {
     return (

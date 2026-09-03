@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import dynamic from "next/dynamic";
-import { useState, useRef, useMemo, useEffect, useCallback } from "react";
+import { useState, useRef, useMemo, useEffect, useCallback, useTransition } from "react";
 import gsap from "gsap";
 import { useGSAP } from "@gsap/react";
 
@@ -58,11 +58,69 @@ const initialBoards: Whiteboard[] = [];
 
 export default function WhiteboardPage() {
   const editorRef = useRef<HTMLDivElement>(null);
+  const isInitialMount = useRef(true);
+  const [, startTransition] = useTransition();
   const [boards, setBoards] = useState<Whiteboard[]>(initialBoards);
   const [selectedId, setSelectedId] = useState<string>("");
   const [searchQuery, setSearchQuery] = useState("");
   const [sidebarWidth, setSidebarWidth] = useState<number>(300);
   const [isResizing, setIsResizing] = useState<boolean>(false);
+  const [saveStatus, setSaveStatus] = useState<"saved" | "saving">("saved");
+
+  // 1. Load boards from localStorage on mount
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem("paperly_whiteboards");
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          startTransition(() => {
+            setBoards(parsed);
+            setSelectedId(parsed[0].id);
+          });
+        }
+      }
+    } catch (e) {
+      console.error("Failed to load whiteboards from localStorage", e);
+    }
+  }, []);
+
+  // 2. Automatic debounced persistence to localStorage
+  useEffect(() => {
+    if (isInitialMount.current) {
+      isInitialMount.current = false;
+      return;
+    }
+
+    setSaveStatus("saving");
+    const timer = setTimeout(() => {
+      try {
+        localStorage.setItem("paperly_whiteboards", JSON.stringify(boards));
+        setSaveStatus("saved");
+      } catch (e) {
+        console.error("Failed to autosave whiteboards", e);
+      }
+    }, 400);
+
+    return () => clearTimeout(timer);
+  }, [boards]);
+
+  // 3. Ctrl+S / Cmd+S manual save shortcut
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === "s") {
+        e.preventDefault();
+        try {
+          localStorage.setItem("paperly_whiteboards", JSON.stringify(boards));
+          setSaveStatus("saved");
+        } catch (err) {
+          console.error(err);
+        }
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [boards]);
 
   const activeBoard = boards.find((b) => b.id === selectedId) || boards[0];
 
@@ -115,7 +173,11 @@ export default function WhiteboardPage() {
 
   const handleTitleChange = (newTitle: string) => {
     setBoards((prev) =>
-      prev.map((b) => (b.id === selectedId ? { ...b, title: newTitle } : b))
+      prev.map((b) =>
+        b.id === selectedId
+          ? { ...b, title: newTitle, updatedAt: "Just now" }
+          : b
+      )
     );
   };
 
@@ -125,7 +187,7 @@ export default function WhiteboardPage() {
         prev.map((b) => {
           if (b.id === selectedId) {
             if (b.content === newContent) return b;
-            return { ...b, content: newContent };
+            return { ...b, content: newContent, updatedAt: "Just now" };
           }
           return b;
         })
@@ -143,8 +205,13 @@ export default function WhiteboardPage() {
       updatedAt: "Just now",
       content: `{"elements":[]}`,
     };
-    setBoards([newBoard, ...boards]);
+    const updated = [newBoard, ...boards];
+    setBoards(updated);
     setSelectedId(newId);
+    try {
+      localStorage.setItem("paperly_whiteboards", JSON.stringify(updated));
+      setSaveStatus("saved");
+    } catch {}
   };
 
   const handleDeleteBoard = (id: string, e: React.MouseEvent) => {
@@ -154,6 +221,10 @@ export default function WhiteboardPage() {
     if (selectedId === id) {
       setSelectedId(remaining[0]?.id || "");
     }
+    try {
+      localStorage.setItem("paperly_whiteboards", JSON.stringify(remaining));
+      setSaveStatus("saved");
+    } catch {}
   };
 
   return (
@@ -333,8 +404,22 @@ export default function WhiteboardPage() {
                     placeholder="Whiteboard title..."
                   />
                 </div>
-                <div className="flex items-center gap-3">
-                  <span className="font-mono text-[11px] uppercase tracking-widest text-[#8E8E93] select-none">
+                <div className="flex items-center gap-3 flex-shrink-0">
+                  {/* Autosave Status Badge */}
+                  <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-white border border-[#E5E0D5] text-[11px] font-mono shadow-2xs select-none">
+                    {saveStatus === "saving" ? (
+                      <>
+                        <span className="w-1.5 h-1.5 rounded-full bg-[#D75800] animate-pulse" />
+                        <span className="text-[#D75800] font-medium">Saving...</span>
+                      </>
+                    ) : (
+                      <>
+                        <span className="w-1.5 h-1.5 rounded-full bg-[#34C759]" />
+                        <span className="text-[#6E6E73]">Saved</span>
+                      </>
+                    )}
+                  </div>
+                  <span className="font-mono text-[11px] uppercase tracking-widest text-[#8E8E93] select-none hidden sm:inline">
                     {activeBoard.dateDisplay}
                   </span>
                 </div>

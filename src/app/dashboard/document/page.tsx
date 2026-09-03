@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import dynamic from "next/dynamic";
-import { useState, useRef, useMemo, useEffect, useCallback } from "react";
+import { useState, useRef, useMemo, useEffect, useCallback, useTransition } from "react";
 import gsap from "gsap";
 import { useGSAP } from "@gsap/react";
 
@@ -58,11 +58,69 @@ const initialDocs: DocumentNote[] = [];
 
 export default function DocumentPage() {
   const editorRef = useRef<HTMLDivElement>(null);
+  const isInitialMount = useRef(true);
+  const [, startTransition] = useTransition();
   const [docs, setDocs] = useState<DocumentNote[]>(initialDocs);
   const [selectedId, setSelectedId] = useState<string>("");
   const [searchQuery, setSearchQuery] = useState("");
   const [sidebarWidth, setSidebarWidth] = useState<number>(300);
   const [isResizing, setIsResizing] = useState<boolean>(false);
+  const [saveStatus, setSaveStatus] = useState<"saved" | "saving">("saved");
+
+  // 1. Load documents from localStorage on mount
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem("paperly_documents");
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          startTransition(() => {
+            setDocs(parsed);
+            setSelectedId(parsed[0].id);
+          });
+        }
+      }
+    } catch (e) {
+      console.error("Failed to load documents from localStorage", e);
+    }
+  }, []);
+
+  // 2. Automatic debounced persistence to localStorage on every change
+  useEffect(() => {
+    if (isInitialMount.current) {
+      isInitialMount.current = false;
+      return;
+    }
+
+    setSaveStatus("saving");
+    const timer = setTimeout(() => {
+      try {
+        localStorage.setItem("paperly_documents", JSON.stringify(docs));
+        setSaveStatus("saved");
+      } catch (e) {
+        console.error("Failed to autosave documents", e);
+      }
+    }, 400);
+
+    return () => clearTimeout(timer);
+  }, [docs]);
+
+  // 3. Ctrl+S / Cmd+S instant manual save shortcut
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === "s") {
+        e.preventDefault();
+        try {
+          localStorage.setItem("paperly_documents", JSON.stringify(docs));
+          setSaveStatus("saved");
+        } catch (err) {
+          console.error(err);
+        }
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [docs]);
 
   const activeDoc = docs.find((d) => d.id === selectedId) || docs[0];
 
@@ -122,7 +180,11 @@ export default function DocumentPage() {
 
   const handleTitleChange = (newTitle: string) => {
     setDocs((prev) =>
-      prev.map((d) => (d.id === selectedId ? { ...d, title: newTitle } : d))
+      prev.map((d) =>
+        d.id === selectedId
+          ? { ...d, title: newTitle, updatedAt: "Just now" }
+          : d
+      )
     );
   };
 
@@ -132,7 +194,7 @@ export default function DocumentPage() {
         prev.map((d) => {
           if (d.id === selectedId) {
             if (d.content === newContent) return d;
-            return { ...d, content: newContent };
+            return { ...d, content: newContent, updatedAt: "Just now" };
           }
           return d;
         })
@@ -150,8 +212,13 @@ export default function DocumentPage() {
       updatedAt: "Just now",
       content: "",
     };
-    setDocs([newDoc, ...docs]);
+    const updated = [newDoc, ...docs];
+    setDocs(updated);
     setSelectedId(newId);
+    try {
+      localStorage.setItem("paperly_documents", JSON.stringify(updated));
+      setSaveStatus("saved");
+    } catch {}
   };
 
   const handleDeleteDoc = (id: string, e: React.MouseEvent) => {
@@ -161,6 +228,10 @@ export default function DocumentPage() {
     if (selectedId === id) {
       setSelectedId(remaining[0]?.id || "");
     }
+    try {
+      localStorage.setItem("paperly_documents", JSON.stringify(remaining));
+      setSaveStatus("saved");
+    } catch {}
   };
 
   return (
@@ -364,8 +435,22 @@ export default function DocumentPage() {
                     placeholder="Document title..."
                   />
                 </div>
-                <div className="flex items-center gap-3">
-                  <span className="font-mono text-[11px] uppercase tracking-widest text-[#8E8E93] select-none">
+                <div className="flex items-center gap-3 flex-shrink-0">
+                  {/* Autosave Status Badge */}
+                  <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-white border border-[#E5E0D5] text-[11px] font-mono shadow-2xs select-none">
+                    {saveStatus === "saving" ? (
+                      <>
+                        <span className="w-1.5 h-1.5 rounded-full bg-[#D75800] animate-pulse" />
+                        <span className="text-[#D75800] font-medium">Saving...</span>
+                      </>
+                    ) : (
+                      <>
+                        <span className="w-1.5 h-1.5 rounded-full bg-[#34C759]" />
+                        <span className="text-[#6E6E73]">Saved</span>
+                      </>
+                    )}
+                  </div>
+                  <span className="font-mono text-[11px] uppercase tracking-widest text-[#8E8E93] select-none hidden sm:inline">
                     {activeDoc.dateDisplay}&nbsp;&nbsp;&bull;&nbsp;&nbsp;{wordCount} words
                   </span>
                 </div>
