@@ -323,7 +323,7 @@ export default function StudyPage() {
 
   return (
     <div
-      className={`h-screen w-screen bg-[#FAF7F2] text-[#1C1C1E] p-3 sm:p-4 md:p-5 flex gap-3.5 sm:gap-4 overflow-hidden font-sans ${
+      className={`h-screen w-full max-w-full bg-[#FAF7F2] text-[#1C1C1E] p-3 sm:p-4 md:p-5 flex gap-3.5 sm:gap-4 overflow-hidden font-sans ${
         isResizing ? "select-none cursor-col-resize" : "select-none"
       }`}
     >
@@ -561,7 +561,7 @@ export default function StudyPage() {
             </div>
 
             {/* PDF Viewport */}
-            <div className="flex-1 w-full h-full min-h-0 relative bg-[#525659]">
+            <div className="flex-1 w-full min-h-0 relative bg-[#F2F2F7]">
               <iframe
                 src={`${activeFile.url}#toolbar=${showNativeBar ? "1" : "0"}&navpanes=0&view=FitH`}
                 title={activeFile.name}
