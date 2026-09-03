@@ -3,6 +3,9 @@
 import Link from "next/link";
 import { useState, useEffect, useMemo, useTransition } from "react";
 import { SignInButton, SignUpButton, Show, UserButton } from "@clerk/nextjs";
+import { getDocuments } from "@/actions/documents";
+import { getWhiteboards } from "@/actions/whiteboards";
+import { getKanbanTasks } from "@/actions/tasks";
 
 interface SavedDoc {
   id: string;
@@ -92,35 +95,37 @@ export default function DashboardPage() {
   const [displayedText, setDisplayedText] = useState("");
   const [isTyping, setIsTyping] = useState(true);
 
-  // Load saved documents, whiteboards, tasks, and study files from localStorage
+  // Load saved documents, whiteboards, tasks from NeonDB
   useEffect(() => {
-    try {
-      const docsRaw = localStorage.getItem("paperly_documents");
-      const boardsRaw = localStorage.getItem("paperly_whiteboards");
-      const tasksRaw = localStorage.getItem("paperly_kanban_tasks");
-      const studyRaw = localStorage.getItem("paperly_study_files");
+    async function loadData() {
+      try {
+        const [dbDocs, dbBoards, dbTasks] = await Promise.all([
+          getDocuments(),
+          getWhiteboards(),
+          getKanbanTasks(),
+        ]);
 
-      startTransition(() => {
-        if (docsRaw) {
-          const parsed = JSON.parse(docsRaw);
-          if (Array.isArray(parsed)) setDocuments(parsed);
-        }
-        if (boardsRaw) {
-          const parsed = JSON.parse(boardsRaw);
-          if (Array.isArray(parsed)) setWhiteboards(parsed);
-        }
-        if (tasksRaw) {
-          const parsed = JSON.parse(tasksRaw);
-          if (Array.isArray(parsed)) setTasks(parsed);
-        }
+        startTransition(() => {
+          if (dbDocs) setDocuments(dbDocs);
+          if (dbBoards) setWhiteboards(dbBoards);
+          if (dbTasks) setTasks(dbTasks);
+        });
+
+        // Load study files from localStorage if present
+        const studyRaw = localStorage.getItem("paperly_study_files");
         if (studyRaw) {
           const parsed = JSON.parse(studyRaw);
-          if (Array.isArray(parsed)) setStudyFiles(parsed);
+          if (Array.isArray(parsed)) {
+            startTransition(() => {
+              setStudyFiles(parsed);
+            });
+          }
         }
-      });
-    } catch (e) {
-      console.error("Failed to load dashboard data from localStorage", e);
+      } catch (e) {
+        console.error("Failed to load dashboard data from NeonDB", e);
+      }
     }
+    loadData();
   }, []);
 
   const todoCount = tasks.filter((t) => t.status === "todo").length;

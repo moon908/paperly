@@ -6,6 +6,19 @@ import { useState, useRef, useMemo, useEffect, useCallback, useTransition } from
 import gsap from "gsap";
 import { useGSAP } from "@gsap/react";
 
+import { getDocuments, upsertDocument, deleteDocument, DbDocument } from "@/actions/documents";
+
+function generateUUID(): string {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    const v = c === "x" ? r : (r & 0x3) | 0x8;
+    return v.toString(16);
+  });
+}
+
 const BlockNoteEditor = dynamic(
   () => import("@/components/BlockNoteEditor"),
   {
@@ -67,66 +80,107 @@ export default function DocumentPage() {
   const [isResizing, setIsResizing] = useState<boolean>(false);
   const [saveStatus, setSaveStatus] = useState<"saved" | "saving">("saved");
 
-  // 1. Load documents from localStorage on mount
+  // 1. Load documents from NeonDB on mount (with localStorage fallback/migration)
   useEffect(() => {
-    try {
-      const saved = localStorage.getItem("paperly_documents");
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) {
+    async function loadDocs() {
+      try {
+        const dbDocs = await getDocuments();
+        if (dbDocs && dbDocs.length > 0) {
           const urlParams = new URLSearchParams(window.location.search);
           const targetId = urlParams.get("id");
-          const found = targetId ? parsed.find((d: DocumentNote) => d.id === targetId) : null;
+          const found = targetId ? dbDocs.find((d) => d.id === targetId) : null;
 
           startTransition(() => {
-            setDocs(parsed);
-            setSelectedId(found ? found.id : parsed[0].id);
+            setDocs(dbDocs);
+            setSelectedId(found ? found.id : dbDocs[0].id);
           });
+          localStorage.setItem("paperly_documents", JSON.stringify(dbDocs));
+          return;
         }
+
+        // Fallback: check localStorage and migrate if present
+        const saved = localStorage.getItem("paperly_documents");
+        if (saved) {
+          const parsed = JSON.parse(saved);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            const migrated: DocumentNote[] = [];
+            for (const item of parsed) {
+              const validUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(item.id)
+                ? item.id
+                : generateUUID();
+              const newDoc: DocumentNote = {
+                id: validUuid,
+                title: item.title || "Untitled Document",
+                dateDisplay: item.dateDisplay || "TODAY",
+                updatedAt: item.updatedAt || "Just now",
+                content: item.content || "",
+              };
+              migrated.push(newDoc);
+              await upsertDocument(newDoc);
+            }
+            startTransition(() => {
+              setDocs(migrated);
+              setSelectedId(migrated[0].id);
+            });
+            localStorage.setItem("paperly_documents", JSON.stringify(migrated));
+          }
+        }
+      } catch (e) {
+        console.error("Failed to load documents from NeonDB", e);
       }
-    } catch (e) {
-      console.error("Failed to load documents from localStorage", e);
     }
+    loadDocs();
   }, []);
 
-  // 2. Automatic debounced persistence to localStorage on every change
+  const activeDoc = docs.find((d) => d.id === selectedId) || docs[0];
+
+  // 2. Automatic debounced persistence to NeonDB on change
   useEffect(() => {
     if (isInitialMount.current) {
       isInitialMount.current = false;
       return;
     }
+    if (!activeDoc) return;
 
     setSaveStatus("saving");
-    const timer = setTimeout(() => {
+    const timer = setTimeout(async () => {
       try {
         localStorage.setItem("paperly_documents", JSON.stringify(docs));
+        await upsertDocument({
+          id: activeDoc.id,
+          title: activeDoc.title,
+          content: activeDoc.content,
+          dateDisplay: activeDoc.dateDisplay,
+        });
         setSaveStatus("saved");
       } catch (e) {
-        console.error("Failed to autosave documents", e);
+        console.error("Failed to autosave document to NeonDB", e);
       }
-    }, 400);
+    }, 500);
 
     return () => clearTimeout(timer);
-  }, [docs]);
+  }, [docs, activeDoc?.id, activeDoc?.title, activeDoc?.content]);
 
   // 3. Ctrl+S / Cmd+S instant manual save shortcut
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key === "s") {
         e.preventDefault();
-        try {
-          localStorage.setItem("paperly_documents", JSON.stringify(docs));
-          setSaveStatus("saved");
-        } catch (err) {
-          console.error(err);
+        if (activeDoc) {
+          setSaveStatus("saving");
+          upsertDocument({
+            id: activeDoc.id,
+            title: activeDoc.title,
+            content: activeDoc.content,
+            dateDisplay: activeDoc.dateDisplay,
+          }).then(() => setSaveStatus("saved"));
         }
       }
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [docs]);
+  }, [activeDoc]);
 
-  const activeDoc = docs.find((d) => d.id === selectedId) || docs[0];
 
   const filteredDocs = useMemo(() => {
     if (!searchQuery.trim()) return docs;
@@ -207,8 +261,8 @@ export default function DocumentPage() {
     [selectedId]
   );
 
-  const handleCreateDoc = () => {
-    const newId = `doc-${Date.now()}`;
+  const handleCreateDoc = async () => {
+    const newId = generateUUID();
     const newDoc: DocumentNote = {
       id: newId,
       title: "Untitled Document",
@@ -221,11 +275,15 @@ export default function DocumentPage() {
     setSelectedId(newId);
     try {
       localStorage.setItem("paperly_documents", JSON.stringify(updated));
+      setSaveStatus("saving");
+      await upsertDocument(newDoc);
       setSaveStatus("saved");
-    } catch {}
+    } catch {
+      setSaveStatus("saved");
+    }
   };
 
-  const handleDeleteDoc = (id: string, e: React.MouseEvent) => {
+  const handleDeleteDoc = async (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
     const remaining = docs.filter((d) => d.id !== id);
     setDocs(remaining);
@@ -234,8 +292,8 @@ export default function DocumentPage() {
     }
     try {
       localStorage.setItem("paperly_documents", JSON.stringify(remaining));
-      setSaveStatus("saved");
     } catch {}
+    await deleteDocument(id);
   };
 
   return (

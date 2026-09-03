@@ -6,6 +6,19 @@ import { useState, useRef, useMemo, useEffect, useCallback, useTransition } from
 import gsap from "gsap";
 import { useGSAP } from "@gsap/react";
 
+import { getWhiteboards, upsertWhiteboard, deleteWhiteboard } from "@/actions/whiteboards";
+
+function generateUUID(): string {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    const v = c === "x" ? r : (r & 0x3) | 0x8;
+    return v.toString(16);
+  });
+}
+
 const WhiteboardEditor = dynamic(
   () => import("@/components/WhiteboardEditor"),
   {
@@ -67,66 +80,107 @@ export default function WhiteboardPage() {
   const [isResizing, setIsResizing] = useState<boolean>(false);
   const [saveStatus, setSaveStatus] = useState<"saved" | "saving">("saved");
 
-  // 1. Load boards from localStorage on mount
+  // 1. Load boards from NeonDB on mount (with localStorage fallback/migration)
   useEffect(() => {
-    try {
-      const saved = localStorage.getItem("paperly_whiteboards");
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) {
+    async function loadBoards() {
+      try {
+        const dbBoards = await getWhiteboards();
+        if (dbBoards && dbBoards.length > 0) {
           const urlParams = new URLSearchParams(window.location.search);
           const targetId = urlParams.get("id");
-          const found = targetId ? parsed.find((b: Whiteboard) => b.id === targetId) : null;
+          const found = targetId ? dbBoards.find((b) => b.id === targetId) : null;
 
           startTransition(() => {
-            setBoards(parsed);
-            setSelectedId(found ? found.id : parsed[0].id);
+            setBoards(dbBoards);
+            setSelectedId(found ? found.id : dbBoards[0].id);
           });
+          localStorage.setItem("paperly_whiteboards", JSON.stringify(dbBoards));
+          return;
         }
+
+        // Fallback: check localStorage and migrate
+        const saved = localStorage.getItem("paperly_whiteboards");
+        if (saved) {
+          const parsed = JSON.parse(saved);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            const migrated: Whiteboard[] = [];
+            for (const item of parsed) {
+              const validUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(item.id)
+                ? item.id
+                : generateUUID();
+              const newBoard: Whiteboard = {
+                id: validUuid,
+                title: item.title || "Untitled Whiteboard",
+                dateDisplay: item.dateDisplay || "TODAY",
+                updatedAt: item.updatedAt || "Just now",
+                content: item.content || '{"elements":[]}',
+              };
+              migrated.push(newBoard);
+              await upsertWhiteboard(newBoard);
+            }
+            startTransition(() => {
+              setBoards(migrated);
+              setSelectedId(migrated[0].id);
+            });
+            localStorage.setItem("paperly_whiteboards", JSON.stringify(migrated));
+          }
+        }
+      } catch (e) {
+        console.error("Failed to load whiteboards from NeonDB", e);
       }
-    } catch (e) {
-      console.error("Failed to load whiteboards from localStorage", e);
     }
+    loadBoards();
   }, []);
 
-  // 2. Automatic debounced persistence to localStorage
+  const activeBoard = boards.find((b) => b.id === selectedId) || boards[0];
+
+  // 2. Automatic debounced persistence to NeonDB on change
   useEffect(() => {
     if (isInitialMount.current) {
       isInitialMount.current = false;
       return;
     }
+    if (!activeBoard) return;
 
     setSaveStatus("saving");
-    const timer = setTimeout(() => {
+    const timer = setTimeout(async () => {
       try {
         localStorage.setItem("paperly_whiteboards", JSON.stringify(boards));
+        await upsertWhiteboard({
+          id: activeBoard.id,
+          title: activeBoard.title,
+          content: activeBoard.content,
+          dateDisplay: activeBoard.dateDisplay,
+        });
         setSaveStatus("saved");
       } catch (e) {
-        console.error("Failed to autosave whiteboards", e);
+        console.error("Failed to autosave whiteboard to NeonDB", e);
       }
-    }, 400);
+    }, 600);
 
     return () => clearTimeout(timer);
-  }, [boards]);
+  }, [boards, activeBoard?.id, activeBoard?.title, activeBoard?.content]);
 
   // 3. Ctrl+S / Cmd+S manual save shortcut
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key === "s") {
         e.preventDefault();
-        try {
-          localStorage.setItem("paperly_whiteboards", JSON.stringify(boards));
-          setSaveStatus("saved");
-        } catch (err) {
-          console.error(err);
+        if (activeBoard) {
+          setSaveStatus("saving");
+          upsertWhiteboard({
+            id: activeBoard.id,
+            title: activeBoard.title,
+            content: activeBoard.content,
+            dateDisplay: activeBoard.dateDisplay,
+          }).then(() => setSaveStatus("saved"));
         }
       }
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [boards]);
+  }, [activeBoard]);
 
-  const activeBoard = boards.find((b) => b.id === selectedId) || boards[0];
 
   const filteredBoards = useMemo(() => {
     if (!searchQuery.trim()) return boards;
@@ -200,8 +254,8 @@ export default function WhiteboardPage() {
     [selectedId]
   );
 
-  const handleCreateBoard = () => {
-    const newId = `board-${Date.now()}`;
+  const handleCreateBoard = async () => {
+    const newId = generateUUID();
     const newBoard: Whiteboard = {
       id: newId,
       title: "Untitled Whiteboard",
@@ -214,11 +268,15 @@ export default function WhiteboardPage() {
     setSelectedId(newId);
     try {
       localStorage.setItem("paperly_whiteboards", JSON.stringify(updated));
+      setSaveStatus("saving");
+      await upsertWhiteboard(newBoard);
       setSaveStatus("saved");
-    } catch {}
+    } catch {
+      setSaveStatus("saved");
+    }
   };
 
-  const handleDeleteBoard = (id: string, e: React.MouseEvent) => {
+  const handleDeleteBoard = async (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
     const remaining = boards.filter((b) => b.id !== id);
     setBoards(remaining);
@@ -227,8 +285,8 @@ export default function WhiteboardPage() {
     }
     try {
       localStorage.setItem("paperly_whiteboards", JSON.stringify(remaining));
-      setSaveStatus("saved");
     } catch {}
+    await deleteWhiteboard(id);
   };
 
   return (

@@ -2,6 +2,23 @@
 
 import Link from "next/link";
 import { useState, useEffect, useMemo, useTransition } from "react";
+import {
+  getKanbanTasks,
+  upsertKanbanTask,
+  updateTaskStatus,
+  deleteKanbanTask,
+} from "@/actions/tasks";
+
+function generateUUID(): string {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    const v = c === "x" ? r : (r & 0x3) | 0x8;
+    return v.toString(16);
+  });
+}
 
 export type TaskStatus = "todo" | "in_progress" | "done" | "on_hold";
 export type TaskPriority = "urgent" | "high" | "medium" | "low";
@@ -178,24 +195,55 @@ export default function KanbanPage() {
   const [draggedTaskId, setDraggedTaskId] = useState<string | null>(null);
   const [, startTransition] = useTransition();
 
-  // Load from localStorage on mount
+  // Load from NeonDB on mount (with localStorage fallback/migration)
   useEffect(() => {
-    try {
-      const saved = localStorage.getItem("paperly_kanban_tasks");
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) {
+    async function loadTasks() {
+      try {
+        const dbTasks = await getKanbanTasks();
+        if (dbTasks && dbTasks.length > 0) {
           startTransition(() => {
-            setTasks(parsed);
+            setTasks(dbTasks);
           });
+          localStorage.setItem("paperly_kanban_tasks", JSON.stringify(dbTasks));
+          return;
         }
+
+        // Fallback: check localStorage and migrate
+        const saved = localStorage.getItem("paperly_kanban_tasks");
+        if (saved) {
+          const parsed = JSON.parse(saved);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            const migrated: KanbanTask[] = [];
+            for (const item of parsed) {
+              const validUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(item.id)
+                ? item.id
+                : generateUUID();
+              const newTask: KanbanTask = {
+                id: validUuid,
+                title: item.title,
+                description: item.description || "",
+                status: item.status || "todo",
+                priority: item.priority || "medium",
+                category: item.category || "General",
+                createdAt: item.createdAt || "Today",
+              };
+              migrated.push(newTask);
+              await upsertKanbanTask(newTask);
+            }
+            startTransition(() => {
+              setTasks(migrated);
+            });
+            localStorage.setItem("paperly_kanban_tasks", JSON.stringify(migrated));
+          }
+        }
+      } catch (e) {
+        console.error("Failed to load tasks from NeonDB", e);
       }
-    } catch {
-      // Ignore local storage parse issues
     }
+    loadTasks();
   }, []);
 
-  // Save to localStorage when tasks change
+  // Save to local state and localStorage cache
   const persistTasks = (newTasks: KanbanTask[]) => {
     setTasks(newTasks);
     try {
@@ -262,8 +310,10 @@ export default function KanbanPage() {
 
   const handleDrop = (status: TaskStatus) => {
     if (!draggedTaskId) return;
-    const updated = tasks.map((t) => (t.id === draggedTaskId ? { ...t, status } : t));
+    const taskId = draggedTaskId;
+    const updated = tasks.map((t) => (t.id === taskId ? { ...t, status } : t));
     persistTasks(updated);
+    updateTaskStatus(taskId, status);
     setDraggedTaskId(null);
   };
 
@@ -299,8 +349,10 @@ export default function KanbanPage() {
     const currentIndex = order.indexOf(task.status);
     const newIndex = direction === "next" ? currentIndex + 1 : currentIndex - 1;
     if (newIndex >= 0 && newIndex < order.length) {
-      const updated = tasks.map((t) => (t.id === taskId ? { ...t, status: order[newIndex] } : t));
+      const newStatus = order[newIndex];
+      const updated = tasks.map((t) => (t.id === taskId ? { ...t, status: newStatus } : t));
       persistTasks(updated);
+      updateTaskStatus(taskId, newStatus);
     }
   };
 
@@ -308,10 +360,11 @@ export default function KanbanPage() {
   const handleDeleteTask = (taskId: string) => {
     const updated = tasks.filter((t) => t.id !== taskId);
     persistTasks(updated);
+    deleteKanbanTask(taskId);
   };
 
   // Add new task
-  const handleCreateTask = (e: React.FormEvent<HTMLFormElement>) => {
+  const handleCreateTask = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     const formData = new FormData(e.currentTarget);
     const title = (formData.get("title") as string)?.trim();
@@ -321,7 +374,7 @@ export default function KanbanPage() {
     const createdAtFormatted = formatIsoToDisplayDate(rawDate);
 
     const newTask: KanbanTask = {
-      id: `task-${Date.now()}`,
+      id: generateUUID(),
       title,
       description: (formData.get("description") as string)?.trim() || "",
       status: (formData.get("status") as TaskStatus) || activeColumnForNew,
@@ -332,10 +385,11 @@ export default function KanbanPage() {
 
     persistTasks([newTask, ...tasks]);
     setIsNewModalOpen(false);
+    await upsertKanbanTask(newTask);
   };
 
   // Update existing task
-  const handleUpdateTask = (e: React.FormEvent<HTMLFormElement>) => {
+  const handleUpdateTask = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     if (!editingTask) return;
     const formData = new FormData(e.currentTarget);
@@ -345,22 +399,21 @@ export default function KanbanPage() {
     const rawDate = (formData.get("createdAt") as string)?.trim();
     const createdAtFormatted = formatIsoToDisplayDate(rawDate);
 
-    const updated = tasks.map((t) =>
-      t.id === editingTask.id
-        ? {
-            ...t,
-            title,
-            description: (formData.get("description") as string)?.trim() || "",
-            status: (formData.get("status") as TaskStatus) || t.status,
-            priority: (formData.get("priority") as TaskPriority) || t.priority,
-            category: (formData.get("category") as string)?.trim() || t.category,
-            createdAt: createdAtFormatted,
-          }
-        : t
-    );
+    const updatedTask: KanbanTask = {
+      ...editingTask,
+      title,
+      description: (formData.get("description") as string)?.trim() || "",
+      status: (formData.get("status") as TaskStatus) || editingTask.status,
+      priority: (formData.get("priority") as TaskPriority) || editingTask.priority,
+      category: (formData.get("category") as string)?.trim() || editingTask.category,
+      createdAt: createdAtFormatted,
+    };
+
+    const updated = tasks.map((t) => (t.id === editingTask.id ? updatedTask : t));
 
     persistTasks(updated);
     setEditingTask(null);
+    await upsertKanbanTask(updatedTask);
   };
 
   const openNewTaskModal = (column: TaskStatus = "todo") => {

@@ -1,5 +1,6 @@
-﻿import { auth } from "@clerk/nextjs/server";
+import { auth } from "@clerk/nextjs/server";
 import { redirect } from "next/navigation";
+import { syncUser } from "@/actions/users";
 
 export default async function DashboardLayout({
   children,
@@ -12,5 +13,9 @@ export default async function DashboardLayout({
     redirect("/sign-in");
   }
 
+  // Automatically sync Clerk user with NeonDB users table
+  await syncUser();
+
   return <>{children}</>;
 }
+
