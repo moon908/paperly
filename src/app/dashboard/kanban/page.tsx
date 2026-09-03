@@ -227,8 +227,12 @@ export default function KanbanPage() {
                 category: item.category || "General",
                 createdAt: item.createdAt || "Today",
               };
+              const rawDate = parseFormattedDateToIso(item.createdAt);
               migrated.push(newTask);
-              await upsertKanbanTask(newTask);
+              await upsertKanbanTask({
+                ...newTask,
+                dueDate: rawDate,
+              });
             }
             startTransition(() => {
               setTasks(migrated);
@@ -370,7 +374,7 @@ export default function KanbanPage() {
     const title = (formData.get("title") as string)?.trim();
     if (!title) return;
 
-    const rawDate = (formData.get("createdAt") as string)?.trim();
+    const rawDate = (formData.get("createdAt") as string)?.trim() || getTodayIso();
     const createdAtFormatted = formatIsoToDisplayDate(rawDate);
 
     const newTask: KanbanTask = {
@@ -385,7 +389,10 @@ export default function KanbanPage() {
 
     persistTasks([newTask, ...tasks]);
     setIsNewModalOpen(false);
-    await upsertKanbanTask(newTask);
+    await upsertKanbanTask({
+      ...newTask,
+      dueDate: rawDate,
+    });
   };
 
   // Update existing task
@@ -396,7 +403,7 @@ export default function KanbanPage() {
     const title = (formData.get("title") as string)?.trim();
     if (!title) return;
 
-    const rawDate = (formData.get("createdAt") as string)?.trim();
+    const rawDate = (formData.get("createdAt") as string)?.trim() || getTodayIso();
     const createdAtFormatted = formatIsoToDisplayDate(rawDate);
 
     const updatedTask: KanbanTask = {
@@ -413,7 +420,10 @@ export default function KanbanPage() {
 
     persistTasks(updated);
     setEditingTask(null);
-    await upsertKanbanTask(updatedTask);
+    await upsertKanbanTask({
+      ...updatedTask,
+      dueDate: rawDate,
+    });
   };
 
   const openNewTaskModal = (column: TaskStatus = "todo") => {
