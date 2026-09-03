@@ -6,6 +6,7 @@ import { SignInButton, SignUpButton, Show, UserButton } from "@clerk/nextjs";
 import { getDocuments } from "@/actions/documents";
 import { getWhiteboards } from "@/actions/whiteboards";
 import { getKanbanTasks } from "@/actions/tasks";
+import { getStudyFiles } from "@/actions/study";
 
 interface SavedDoc {
   id: string;
@@ -99,28 +100,19 @@ export default function DashboardPage() {
   useEffect(() => {
     async function loadData() {
       try {
-        const [dbDocs, dbBoards, dbTasks] = await Promise.all([
+        const [dbDocs, dbBoards, dbTasks, dbFiles] = await Promise.all([
           getDocuments(),
           getWhiteboards(),
           getKanbanTasks(),
+          getStudyFiles(),
         ]);
 
         startTransition(() => {
           if (dbDocs) setDocuments(dbDocs);
           if (dbBoards) setWhiteboards(dbBoards);
           if (dbTasks) setTasks(dbTasks);
+          if (dbFiles) setStudyFiles(dbFiles);
         });
-
-        // Load study files from localStorage if present
-        const studyRaw = localStorage.getItem("paperly_study_files");
-        if (studyRaw) {
-          const parsed = JSON.parse(studyRaw);
-          if (Array.isArray(parsed)) {
-            startTransition(() => {
-              setStudyFiles(parsed);
-            });
-          }
-        }
       } catch (e) {
         console.error("Failed to load dashboard data from NeonDB", e);
       }

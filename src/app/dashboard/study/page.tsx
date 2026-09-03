@@ -3,6 +3,39 @@
 import React, { useState, useRef, useMemo, useEffect, useTransition } from "react";
 import Link from "next/link";
 import { savePdfBlob, getPdfBlob, deletePdfBlob } from "@/lib/pdfStorage";
+import { getStudyFiles, addStudyFile, deleteStudyFile } from "@/actions/study";
+
+function generateUUID(): string {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    const v = c === "x" ? r : (r & 0x3) | 0x8;
+    return v.toString(16);
+  });
+}
+
+function fileToDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result as string);
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+function dataUrlToBlob(dataUrl: string): Blob {
+  const parts = dataUrl.split(",");
+  const mime = parts[0].match(/:(.*?);/)?.[1] || "application/pdf";
+  const bstr = atob(parts[1]);
+  let n = bstr.length;
+  const u8arr = new Uint8Array(n);
+  while (n--) {
+    u8arr[n] = bstr.charCodeAt(n);
+  }
+  return new Blob([u8arr], { type: mime });
+}
 
 interface UploadedPdf {
   id: string;
@@ -57,10 +90,45 @@ export default function StudyPage() {
   const [isResizing, setIsResizing] = useState<boolean>(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // 1. Rehydrate stored PDF files from IndexedDB and metadata from localStorage
+  // 1. Rehydrate stored PDF files from NeonDB (and IndexedDB cache)
   useEffect(() => {
     async function loadStoredFiles() {
       try {
+        const dbFiles = await getStudyFiles();
+        if (dbFiles && dbFiles.length > 0) {
+          const loaded: UploadedPdf[] = [];
+          for (const item of dbFiles) {
+            let blob = await getPdfBlob(item.id);
+            if (!blob && item.fileUrl && item.fileUrl.startsWith("data:")) {
+              try {
+                blob = dataUrlToBlob(item.fileUrl);
+                await savePdfBlob(item.id, blob);
+              } catch {}
+            }
+            const url = blob ? URL.createObjectURL(blob) : item.fileUrl;
+            loaded.push({
+              id: item.id,
+              name: item.name,
+              size: item.size,
+              uploadedAt: item.uploadedAt,
+              url,
+            });
+          }
+
+          if (loaded.length > 0) {
+            const urlParams = new URLSearchParams(window.location.search);
+            const targetId = urlParams.get("id");
+            const match = targetId ? loaded.find((f) => f.id === targetId) : null;
+
+            startTransition(() => {
+              setFiles(loaded);
+              setActiveFileId(match ? match.id : loaded[0].id);
+            });
+          }
+          return;
+        }
+
+        // Fallback: check localStorage and migrate to NeonDB
         const raw = localStorage.getItem("paperly_study_files");
         if (raw) {
           const parsed: Array<{ id: string; name: string; size: string; uploadedAt: string }> = JSON.parse(raw);
@@ -69,27 +137,44 @@ export default function StudyPage() {
             for (const item of parsed) {
               const blob = await getPdfBlob(item.id);
               if (blob) {
+                const validUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(item.id)
+                  ? item.id
+                  : generateUUID();
+                let dataUrl = "";
+                if (blob.size <= 4 * 1024 * 1024) {
+                  dataUrl = await new Promise<string>((res) => {
+                    const r = new FileReader();
+                    r.onload = () => res(r.result as string);
+                    r.readAsDataURL(blob);
+                  });
+                }
+                await savePdfBlob(validUuid, blob);
+                await addStudyFile({
+                  id: validUuid,
+                  name: item.name,
+                  size: item.size,
+                  fileUrl: dataUrl,
+                });
                 loaded.push({
-                  ...item,
+                  id: validUuid,
+                  name: item.name,
+                  size: item.size,
+                  uploadedAt: item.uploadedAt,
                   url: URL.createObjectURL(blob),
                 });
               }
             }
 
             if (loaded.length > 0) {
-              const urlParams = new URLSearchParams(window.location.search);
-              const targetId = urlParams.get("id");
-              const match = targetId ? loaded.find((f) => f.id === targetId) : null;
-
               startTransition(() => {
                 setFiles(loaded);
-                setActiveFileId(match ? match.id : loaded[0].id);
+                setActiveFileId(loaded[0].id);
               });
             }
           }
         }
       } catch (e) {
-        console.error("Failed to load study files", e);
+        console.error("Failed to load study files from NeonDB", e);
       }
     }
     loadStoredFiles();
@@ -123,7 +208,7 @@ export default function StudyPage() {
     };
   }, [isResizing]);
 
-  // Handle file uploads with IndexedDB persistence
+  // Handle file uploads with NeonDB persistence and IndexedDB caching
   const handleUploadFiles = async (uploadedList: FileList | null) => {
     if (!uploadedList || uploadedList.length === 0) return;
 
@@ -138,9 +223,25 @@ export default function StudyPage() {
 
     for (const file of Array.from(uploadedList)) {
       if (file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf")) {
-        const fileId = `pdf-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
+        const fileId = generateUUID();
         await savePdfBlob(fileId, file);
         const objectUrl = URL.createObjectURL(file);
+
+        let dataUrl = "";
+        if (file.size <= 4 * 1024 * 1024) {
+          try {
+            dataUrl = await fileToDataUrl(file);
+          } catch {}
+        }
+
+        // Save record into NeonDB study_files table
+        await addStudyFile({
+          id: fileId,
+          name: file.name,
+          size: formatFileSize(file.size),
+          fileUrl: dataUrl,
+        });
+
         newEntries.push({
           id: fileId,
           name: file.name,
@@ -184,6 +285,8 @@ export default function StudyPage() {
   const handleDeleteFile = async (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
     await deletePdfBlob(id);
+    await deleteStudyFile(id);
+
     const fileToDelete = files.find((f) => f.id === id);
     if (fileToDelete && fileToDelete.url.startsWith("blob:")) {
       URL.revokeObjectURL(fileToDelete.url);
