@@ -27,6 +27,13 @@ interface SavedTask {
   priority: "urgent" | "high" | "medium" | "low";
 }
 
+interface SavedStudyFile {
+  id: string;
+  name: string;
+  size: string;
+  uploadedAt: string;
+}
+
 // Paperly Origami Flight Logo
 function PaperlyLogo({ className = "w-6 h-6" }: { className?: string }) {
   return (
@@ -79,17 +86,19 @@ export default function DashboardPage() {
   const [documents, setDocuments] = useState<SavedDoc[]>([]);
   const [whiteboards, setWhiteboards] = useState<SavedBoard[]>([]);
   const [tasks, setTasks] = useState<SavedTask[]>([]);
+  const [studyFiles, setStudyFiles] = useState<SavedStudyFile[]>([]);
 
   const [currentQuote, setCurrentQuote] = useState(() => motivationalQuotes[0]);
   const [displayedText, setDisplayedText] = useState("");
   const [isTyping, setIsTyping] = useState(true);
 
-  // Load saved documents, whiteboards, and tasks from localStorage
+  // Load saved documents, whiteboards, tasks, and study files from localStorage
   useEffect(() => {
     try {
       const docsRaw = localStorage.getItem("paperly_documents");
       const boardsRaw = localStorage.getItem("paperly_whiteboards");
       const tasksRaw = localStorage.getItem("paperly_kanban_tasks");
+      const studyRaw = localStorage.getItem("paperly_study_files");
 
       startTransition(() => {
         if (docsRaw) {
@@ -103,6 +112,10 @@ export default function DashboardPage() {
         if (tasksRaw) {
           const parsed = JSON.parse(tasksRaw);
           if (Array.isArray(parsed)) setTasks(parsed);
+        }
+        if (studyRaw) {
+          const parsed = JSON.parse(studyRaw);
+          if (Array.isArray(parsed)) setStudyFiles(parsed);
         }
       });
     } catch (e) {
@@ -448,15 +461,63 @@ export default function DashboardPage() {
               )}
             </div>
 
-            {/* Calendar Section */}
+            {/* Study Files Section (Replaces Calendar) */}
             <div className="space-y-2">
               <h2 className="font-serif text-base font-semibold text-[#1C1C1E] border-b border-[#F0ECE3] pb-1.5 flex items-center justify-between">
-                <span>Calendar</span>
-                <span className="text-[11px] font-sans font-normal text-[#918B80]">Today</span>
+                <span>Study files</span>
+                <span className="text-[11px] font-sans font-normal text-[#918B80]">
+                  {studyFiles.length} {studyFiles.length === 1 ? "file" : "files"}
+                </span>
               </h2>
-              <div className="py-1 text-xs text-[#8E8E93]">
-                <span>No scheduled events</span>
-              </div>
+              {studyFiles.length > 0 ? (
+                <>
+                  <ul className="space-y-1 text-xs text-[#555047]">
+                    {studyFiles.slice(0, 3).map((file) => (
+                      <li key={file.id}>
+                        <Link
+                          href={`/dashboard/study?id=${file.id}`}
+                          className="hover:text-[#1E3A2B] hover:underline py-0.5 truncate group flex items-center justify-between gap-1"
+                        >
+                          <span className="truncate flex items-center gap-1.5 min-w-0">
+                            <svg className="w-3.5 h-3.5 text-[#D75800] flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m2.25 0H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" />
+                            </svg>
+                            <span className="truncate">{file.name}</span>
+                          </span>
+                          <span className="text-[10px] text-[#A09A8F] flex-shrink-0 font-mono">
+                            {file.size}
+                          </span>
+                        </Link>
+                      </li>
+                    ))}
+                  </ul>
+                  <div className="flex items-center justify-between pt-1">
+                    <Link
+                      href="/dashboard/study"
+                      className="text-[11px] font-medium text-[#1E3A2B] hover:underline"
+                    >
+                      + Upload
+                    </Link>
+                    {studyFiles.length > 3 && (
+                      <Link
+                        href="/dashboard/study"
+                        className="text-[11px] font-medium text-[#1E3A2B] hover:underline"
+                      >
+                        more &rarr;
+                      </Link>
+                    )}
+                  </div>
+                </>
+              ) : (
+                <div className="py-1 text-xs text-[#8E8E93]">
+                  <span>No study files uploaded</span>
+                  <div className="mt-1">
+                    <Link href="/dashboard/study" className="text-[#1E3A2B] font-medium hover:underline text-[11px]">
+                      + Upload PDF
+                    </Link>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         </aside>

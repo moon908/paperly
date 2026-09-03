@@ -1,7 +1,8 @@
 "use client";
 
-import React, { useState, useRef, useMemo, useEffect } from "react";
+import React, { useState, useRef, useMemo, useEffect, useTransition } from "react";
 import Link from "next/link";
+import { savePdfBlob, getPdfBlob, deletePdfBlob } from "@/lib/pdfStorage";
 
 interface UploadedPdf {
   id: string;
@@ -46,6 +47,7 @@ function formatFileSize(bytes: number): string {
 }
 
 export default function StudyPage() {
+  const [, startTransition] = useTransition();
   const [files, setFiles] = useState<UploadedPdf[]>([]);
   const [activeFileId, setActiveFileId] = useState<string>("");
   const [searchQuery, setSearchQuery] = useState("");
@@ -54,6 +56,44 @@ export default function StudyPage() {
   const [sidebarWidth, setSidebarWidth] = useState<number>(330);
   const [isResizing, setIsResizing] = useState<boolean>(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // 1. Rehydrate stored PDF files from IndexedDB and metadata from localStorage
+  useEffect(() => {
+    async function loadStoredFiles() {
+      try {
+        const raw = localStorage.getItem("paperly_study_files");
+        if (raw) {
+          const parsed: Array<{ id: string; name: string; size: string; uploadedAt: string }> = JSON.parse(raw);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            const loaded: UploadedPdf[] = [];
+            for (const item of parsed) {
+              const blob = await getPdfBlob(item.id);
+              if (blob) {
+                loaded.push({
+                  ...item,
+                  url: URL.createObjectURL(blob),
+                });
+              }
+            }
+
+            if (loaded.length > 0) {
+              const urlParams = new URLSearchParams(window.location.search);
+              const targetId = urlParams.get("id");
+              const match = targetId ? loaded.find((f) => f.id === targetId) : null;
+
+              startTransition(() => {
+                setFiles(loaded);
+                setActiveFileId(match ? match.id : loaded[0].id);
+              });
+            }
+          }
+        }
+      } catch (e) {
+        console.error("Failed to load study files", e);
+      }
+    }
+    loadStoredFiles();
+  }, []);
 
   const startResizing = () => {
     setIsResizing(true);
@@ -83,8 +123,8 @@ export default function StudyPage() {
     };
   }, [isResizing]);
 
-  // Handle file uploads
-  const handleUploadFiles = (uploadedList: FileList | null) => {
+  // Handle file uploads with IndexedDB persistence
+  const handleUploadFiles = async (uploadedList: FileList | null) => {
     if (!uploadedList || uploadedList.length === 0) return;
 
     const newEntries: UploadedPdf[] = [];
@@ -96,22 +136,39 @@ export default function StudyPage() {
       minute: "2-digit",
     });
 
-    Array.from(uploadedList).forEach((file) => {
+    for (const file of Array.from(uploadedList)) {
       if (file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf")) {
+        const fileId = `pdf-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
+        await savePdfBlob(fileId, file);
         const objectUrl = URL.createObjectURL(file);
-        const newDoc: UploadedPdf = {
-          id: `pdf-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+        newEntries.push({
+          id: fileId,
           name: file.name,
           size: formatFileSize(file.size),
           uploadedAt: timeString,
           url: objectUrl,
-        };
-        newEntries.push(newDoc);
+        });
       }
-    });
+    }
 
     if (newEntries.length > 0) {
-      setFiles((prev) => [...newEntries, ...prev]);
+      setFiles((prev) => {
+        const combined = [...newEntries, ...prev];
+        try {
+          localStorage.setItem(
+            "paperly_study_files",
+            JSON.stringify(
+              combined.map((f) => ({
+                id: f.id,
+                name: f.name,
+                size: f.size,
+                uploadedAt: f.uploadedAt,
+              }))
+            )
+          );
+        } catch {}
+        return combined;
+      });
       setActiveFileId(newEntries[0].id);
     }
   };
@@ -124,8 +181,9 @@ export default function StudyPage() {
     }
   };
 
-  const handleDeleteFile = (id: string, e: React.MouseEvent) => {
+  const handleDeleteFile = async (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
+    await deletePdfBlob(id);
     const fileToDelete = files.find((f) => f.id === id);
     if (fileToDelete && fileToDelete.url.startsWith("blob:")) {
       URL.revokeObjectURL(fileToDelete.url);
@@ -133,6 +191,19 @@ export default function StudyPage() {
 
     const remaining = files.filter((f) => f.id !== id);
     setFiles(remaining);
+    try {
+      localStorage.setItem(
+        "paperly_study_files",
+        JSON.stringify(
+          remaining.map((f) => ({
+            id: f.id,
+            name: f.name,
+            size: f.size,
+            uploadedAt: f.uploadedAt,
+          }))
+        )
+      );
+    } catch {}
 
     if (activeFileId === id) {
       setActiveFileId(remaining.length > 0 ? remaining[0].id : "");
