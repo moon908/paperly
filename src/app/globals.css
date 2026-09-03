@@ -1,0 +1,77 @@
+@import "tailwindcss";
+
+:root {
+  --background: #ffffff;
+  --foreground: #171717;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-inter), -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --font-serif: var(--font-lora), Georgia, Cambria, serif;
+}
+
+body {
+  font-family: var(--font-sans);
+}
+
+/* Custom Minimalist Application Scrollbar */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #D6D0C2 transparent;
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background-color: #D6D0C2;
+  border-radius: 9999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+  transition: background-color 0.2s ease;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background-color: #A39C8E;
+}
+
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+::-webkit-scrollbar-button {
+  display: none !important;
+  width: 0 !important;
+  height: 0 !important;
+}
+
+/* Remove Clerk "Secured by Clerk" and "Development Mode" */
+.cl-footerAction + div,
+.cl-footerAction ~ div,
+.cl-footerAction + *,
+div:has(> a[href*="clerk.com"]),
+a[href*="clerk.com"],
+.cl-footerPages,
+.cl-footerItem,
+.cl-devModeNotice,
+.cl-badge,
+[class*="devModeNotice"],
+[class*="devMode"],
+[class*="developmentMode"],
+[data-localization-key="developmentMode"],
+[data-localization-key*="securedBy"] {
+  display: none !important;
+}
+
+.cl-footerAction {
+  border-bottom: none !important;
+}
+

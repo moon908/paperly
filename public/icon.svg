@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32" fill="none">
+  <defs>
+    <filter id="soft" x="-25%" y="-25%" width="150%" height="150%">
+      <feDropShadow dx="0.5" dy="1.5" stdDeviation="1.2" flood-color="#000000" flood-opacity="0.22"/>
+    </filter>
+    <linearGradient id="wing1" x1="6" y1="10" x2="27" y2="5" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFFFFF"/>
+      <stop offset="100%" stop-color="#F4F1EA"/>
+    </linearGradient>
+    <linearGradient id="wing2" x1="16" y1="18" x2="27" y2="5" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#E8E4DA"/>
+      <stop offset="100%" stop-color="#D7D1C3"/>
+    </linearGradient>
+  </defs>
+  <g filter="url(#soft)">
+    <!-- Keel / Bottom Fold -->
+    <polygon points="17,18 19,25 13,23" fill="#B2ABA0"/>
+    <!-- Top/Main Wing (Pure Brilliant White) -->
+    <polygon points="28,4 4,14 17,18" fill="url(#wing1)" stroke="#D8D2C5" stroke-width="0.5" stroke-linejoin="round"/>
+    <!-- Bottom Wing (Shaded White) -->
+    <polygon points="28,4 17,18 20,28" fill="url(#wing2)" stroke="#D8D2C5" stroke-width="0.5" stroke-linejoin="round"/>
+    <!-- Center Spine Line -->
+    <line x1="28" y1="4" x2="17" y2="18" stroke="#CCC6B8" stroke-width="0.5"/>
+  </g>
+</svg>
