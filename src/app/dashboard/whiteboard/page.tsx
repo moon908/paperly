@@ -74,9 +74,13 @@ export default function WhiteboardPage() {
       if (saved) {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed) && parsed.length > 0) {
+          const urlParams = new URLSearchParams(window.location.search);
+          const targetId = urlParams.get("id");
+          const found = targetId ? parsed.find((b: Whiteboard) => b.id === targetId) : null;
+
           startTransition(() => {
             setBoards(parsed);
-            setSelectedId(parsed[0].id);
+            setSelectedId(found ? found.id : parsed[0].id);
           });
         }
       }

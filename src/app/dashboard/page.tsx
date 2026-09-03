@@ -1,8 +1,31 @@
 "use client";
 
 import Link from "next/link";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo, useTransition } from "react";
 import { SignInButton, SignUpButton, Show, UserButton } from "@clerk/nextjs";
+
+interface SavedDoc {
+  id: string;
+  title: string;
+  content: string;
+  updatedAt: string;
+  dateDisplay?: string;
+}
+
+interface SavedBoard {
+  id: string;
+  title: string;
+  content: string;
+  updatedAt: string;
+  dateDisplay?: string;
+}
+
+interface SavedTask {
+  id: string;
+  title: string;
+  status: "todo" | "in_progress" | "done" | "on_hold";
+  priority: "urgent" | "high" | "medium" | "low";
+}
 
 // Paperly Origami Flight Logo
 function PaperlyLogo({ className = "w-6 h-6" }: { className?: string }) {
@@ -52,9 +75,90 @@ const motivationalQuotes = [
 ];
 
 export default function DashboardPage() {
+  const [, startTransition] = useTransition();
+  const [documents, setDocuments] = useState<SavedDoc[]>([]);
+  const [whiteboards, setWhiteboards] = useState<SavedBoard[]>([]);
+  const [tasks, setTasks] = useState<SavedTask[]>([]);
+
   const [currentQuote, setCurrentQuote] = useState(() => motivationalQuotes[0]);
   const [displayedText, setDisplayedText] = useState("");
   const [isTyping, setIsTyping] = useState(true);
+
+  // Load saved documents, whiteboards, and tasks from localStorage
+  useEffect(() => {
+    try {
+      const docsRaw = localStorage.getItem("paperly_documents");
+      const boardsRaw = localStorage.getItem("paperly_whiteboards");
+      const tasksRaw = localStorage.getItem("paperly_kanban_tasks");
+
+      startTransition(() => {
+        if (docsRaw) {
+          const parsed = JSON.parse(docsRaw);
+          if (Array.isArray(parsed)) setDocuments(parsed);
+        }
+        if (boardsRaw) {
+          const parsed = JSON.parse(boardsRaw);
+          if (Array.isArray(parsed)) setWhiteboards(parsed);
+        }
+        if (tasksRaw) {
+          const parsed = JSON.parse(tasksRaw);
+          if (Array.isArray(parsed)) setTasks(parsed);
+        }
+      });
+    } catch (e) {
+      console.error("Failed to load dashboard data from localStorage", e);
+    }
+  }, []);
+
+  const todoCount = tasks.filter((t) => t.status === "todo").length;
+  const inProgressCount = tasks.filter((t) => t.status === "in_progress").length;
+  const completedCount = tasks.filter((t) => t.status === "done").length;
+  const urgentCount = tasks.filter((t) => t.priority === "urgent").length;
+
+  const recentItems = useMemo(() => {
+    const list: Array<{
+      id: string;
+      title: string;
+      snippet: string;
+      type: "DOC" | "CANVAS";
+      href: string;
+      updatedAt: string;
+    }> = [];
+
+    documents.forEach((d) => {
+      const plain = d.content
+        ? d.content.replace(/[#*`_~[\]()]/g, " ").replace(/\s+/g, " ").trim().slice(0, 140)
+        : "Empty document notes...";
+      list.push({
+        id: d.id,
+        title: d.title || "Untitled Document",
+        snippet: plain || "Rich text notes and outline...",
+        type: "DOC",
+        href: `/dashboard/document?id=${d.id}`,
+        updatedAt: d.updatedAt || d.dateDisplay || "Recently",
+      });
+    });
+
+    whiteboards.forEach((b) => {
+      let snippet = "Infinite visual sketch canvas";
+      try {
+        const parsed = JSON.parse(b.content);
+        if (parsed?.elements?.length) {
+          snippet = `${parsed.elements.length} visual drawing element${parsed.elements.length === 1 ? "" : "s"} on canvas`;
+        }
+      } catch {}
+      list.push({
+        id: b.id,
+        title: b.title || "Untitled Whiteboard",
+        snippet,
+        type: "CANVAS",
+        href: `/dashboard/whiteboard?id=${b.id}`,
+        updatedAt: b.updatedAt || b.dateDisplay || "Recently",
+      });
+    });
+
+    return list.slice(0, 4);
+  }, [documents, whiteboards]);
 
   // Typewriter effect animation
   useEffect(() => {
@@ -186,48 +290,162 @@ export default function DashboardPage() {
             <div className="space-y-2">
               <h2 className="font-serif text-base font-semibold text-[#1C1C1E] border-b border-[#F0ECE3] pb-1.5 flex items-center justify-between">
                 <span>Document</span>
-                <span className="text-[11px] font-sans font-normal text-[#918B80]">0 files</span>
+                <span className="text-[11px] font-sans font-normal text-[#918B80]">
+                  {documents.length} {documents.length === 1 ? "file" : "files"}
+                </span>
               </h2>
-              <div className="py-1 text-xs text-[#8E8E93]">
-                <span>No documents yet</span>
-                <div className="mt-1">
-                  <Link href="/dashboard/document" className="text-[#007AFF] font-medium hover:underline text-[11px]">
-                    + New Document
-                  </Link>
+              {documents.length > 0 ? (
+                <>
+                  <ul className="space-y-1 text-xs text-[#555047]">
+                    {documents.slice(0, 3).map((doc) => (
+                      <li key={doc.id}>
+                        <Link
+                          href={`/dashboard/document?id=${doc.id}`}
+                          className="hover:text-[#007AFF] hover:underline py-0.5 truncate group flex items-center justify-between gap-1"
+                        >
+                          <span className="truncate">{doc.title || "Untitled Document"}</span>
+                          <span className="text-[10px] text-[#A09A8F] flex-shrink-0 group-hover:text-[#007AFF]">
+                            {doc.updatedAt || doc.dateDisplay || ""}
+                          </span>
+                        </Link>
+                      </li>
+                    ))}
+                  </ul>
+                  <div className="flex items-center justify-between pt-1">
+                    <Link
+                      href="/dashboard/document"
+                      className="text-[11px] font-medium text-[#007AFF] hover:underline"
+                    >
+                      + New
+                    </Link>
+                    {documents.length > 3 && (
+                      <Link
+                        href="/dashboard/document"
+                        className="text-[11px] font-medium text-[#007AFF] hover:underline"
+                      >
+                        more &rarr;
+                      </Link>
+                    )}
+                  </div>
+                </>
+              ) : (
+                <div className="py-1 text-xs text-[#8E8E93]">
+                  <span>No documents yet</span>
+                  <div className="mt-1">
+                    <Link href="/dashboard/document" className="text-[#007AFF] font-medium hover:underline text-[11px]">
+                      + New Document
+                    </Link>
+                  </div>
                 </div>
-              </div>
+              )}
             </div>
 
             {/* Whiteboard Section */}
             <div className="space-y-2">
               <h2 className="font-serif text-base font-semibold text-[#1C1C1E] border-b border-[#F0ECE3] pb-1.5 flex items-center justify-between">
                 <span>White board</span>
-                <span className="text-[11px] font-sans font-normal text-[#918B80]">0 boards</span>
+                <span className="text-[11px] font-sans font-normal text-[#918B80]">
+                  {whiteboards.length} {whiteboards.length === 1 ? "board" : "boards"}
+                </span>
               </h2>
-              <div className="py-1 text-xs text-[#8E8E93]">
-                <span>No boards yet</span>
-                <div className="mt-1">
-                  <Link href="/dashboard/whiteboard" className="text-[#007AFF] font-medium hover:underline text-[11px]">
-                    + New Whiteboard
-                  </Link>
+              {whiteboards.length > 0 ? (
+                <>
+                  <ul className="space-y-1 text-xs text-[#555047]">
+                    {whiteboards.slice(0, 3).map((board) => (
+                      <li key={board.id}>
+                        <Link
+                          href={`/dashboard/whiteboard?id=${board.id}`}
+                          className="hover:text-[#007AFF] hover:underline py-0.5 truncate group flex items-center justify-between gap-1"
+                        >
+                          <span className="truncate">{board.title || "Untitled Whiteboard"}</span>
+                          <span className="text-[10px] text-[#A09A8F] flex-shrink-0 group-hover:text-[#007AFF]">
+                            {board.updatedAt || board.dateDisplay || ""}
+                          </span>
+                        </Link>
+                      </li>
+                    ))}
+                  </ul>
+                  <div className="flex items-center justify-between pt-1">
+                    <Link
+                      href="/dashboard/whiteboard"
+                      className="text-[11px] font-medium text-[#007AFF] hover:underline"
+                    >
+                      + New
+                    </Link>
+                    {whiteboards.length > 3 && (
+                      <Link
+                        href="/dashboard/whiteboard"
+                        className="text-[11px] font-medium text-[#007AFF] hover:underline"
+                      >
+                        more &rarr;
+                      </Link>
+                    )}
+                  </div>
+                </>
+              ) : (
+                <div className="py-1 text-xs text-[#8E8E93]">
+                  <span>No boards yet</span>
+                  <div className="mt-1">
+                    <Link href="/dashboard/whiteboard" className="text-[#007AFF] font-medium hover:underline text-[11px]">
+                      + New Whiteboard
+                    </Link>
+                  </div>
                 </div>
-              </div>
+              )}
             </div>
 
             {/* Kanban Board Section */}
             <div className="space-y-2">
               <h2 className="font-serif text-base font-semibold text-[#1C1C1E] border-b border-[#F0ECE3] pb-1.5 flex items-center justify-between">
                 <span>Kanban board</span>
-                <span className="text-[11px] font-sans font-normal text-[#918B80]">0 tasks</span>
+                <span className="text-[11px] font-sans font-normal text-[#918B80]">
+                  {tasks.length} {tasks.length === 1 ? "task" : "tasks"}
+                </span>
               </h2>
-              <div className="py-1 text-xs text-[#8E8E93]">
-                <span>No tasks yet</span>
-                <div className="mt-1">
-                  <Link href="/dashboard/kanban" className="text-[#5856D6] font-medium hover:underline text-[11px]">
-                    + Add Task
-                  </Link>
+              {tasks.length > 0 ? (
+                <>
+                  <ul className="space-y-1 text-xs text-[#555047]">
+                    <li className="flex justify-between items-center py-0.5">
+                      <span>Todo:</span>
+                      <span className="font-mono font-medium text-[#736E65] bg-[#FAF7F2] px-1.5 py-0.5 rounded text-[11px]">
+                        {todoCount}
+                      </span>
+                    </li>
+                    <li className="flex justify-between items-center py-0.5">
+                      <span>In-Progress:</span>
+                      <span className="font-mono font-medium text-[#1E3A2B] bg-[#E9EFE9] px-1.5 py-0.5 rounded text-[11px]">
+                        {inProgressCount}
+                      </span>
+                    </li>
+                    <li className="flex justify-between items-center py-0.5">
+                      <span>Completed:</span>
+                      <span className="font-mono font-medium text-[#736E65] bg-[#FAF7F2] px-1.5 py-0.5 rounded text-[11px]">
+                        {completedCount}
+                      </span>
+                    </li>
+                    <li className="flex justify-between items-center py-0.5">
+                      <span>Urgent:</span>
+                      <span className="font-mono font-medium text-[#D75800] bg-[#FFF2E8] px-1.5 py-0.5 rounded text-[11px]">
+                        {urgentCount}
+                      </span>
+                    </li>
+                  </ul>
+                  <div className="text-right pt-1">
+                    <Link href="/dashboard/kanban" className="text-[11px] font-medium text-[#5856D6] hover:underline">
+                      view board &rarr;
+                    </Link>
+                  </div>
+                </>
+              ) : (
+                <div className="py-1 text-xs text-[#8E8E93]">
+                  <span>No tasks yet</span>
+                  <div className="mt-1">
+                    <Link href="/dashboard/kanban" className="text-[#5856D6] font-medium hover:underline text-[11px]">
+                      + Add Task
+                    </Link>
+                  </div>
                 </div>
-              </div>
+              )}
             </div>
 
             {/* Calendar Section */}
@@ -373,46 +591,89 @@ export default function DashboardPage() {
             </Link>
           </div>
 
-          {/* Clean Workspace Feed (Ready for NeonDB) */}
-          <div className="bg-white border border-[#E5E0D5] rounded-2xl p-8 sm:p-10 shadow-xs flex flex-col items-center justify-center text-center">
-            <div className="w-14 h-14 rounded-2xl bg-[#FAF7F2] border border-[#E5E0D5] flex items-center justify-center text-[#1E3A2B] shadow-2xs mb-4">
-              <svg className="w-7 h-7" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.5">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" />
-              </svg>
+          {/* Recent Workspace Items Grid or Empty Fresh State */}
+          {recentItems.length > 0 ? (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+              {recentItems.map((item) => (
+                <div
+                  key={item.id}
+                  className="bg-white border border-[#E5E0D5] rounded-2xl p-5 shadow-xs flex flex-col justify-between hover:shadow-sm hover:border-[#1E3A2B]/40 transition-all group"
+                >
+                  <div>
+                    <div className="flex items-center justify-between mb-2">
+                      <h3 className="font-serif text-lg font-semibold text-[#1C1C1E] group-hover:text-[#007AFF] transition-colors line-clamp-1">
+                        {item.title}
+                      </h3>
+                      <span
+                        className={`text-[10px] font-mono uppercase tracking-wider px-2 py-0.5 rounded font-semibold ${
+                          item.type === "DOC"
+                            ? "bg-[#E5F1FF] text-[#007AFF]"
+                            : "bg-[#F0EFFF] text-[#5856D6]"
+                        }`}
+                      >
+                        {item.type}
+                      </span>
+                    </div>
+                    <p className="text-xs text-[#736E65] leading-relaxed line-clamp-3 mb-6 font-sans">
+                      {item.snippet}
+                    </p>
+                  </div>
+                  <div className="flex items-center justify-between pt-3 border-t border-[#F5F2EC]">
+                    <span className="text-[11px] font-mono text-[#8E877B]">
+                      {item.updatedAt}
+                    </span>
+                    <Link
+                      href={item.href}
+                      className="px-4 py-1.5 rounded-xl border border-[#DFD9CE] hover:border-[#007AFF] hover:bg-[#007AFF] hover:text-white text-xs font-medium text-[#2C2823] transition-all cursor-pointer shadow-2xs inline-flex items-center gap-1"
+                    >
+                      <span>open</span>
+                      <span className="text-[11px]">&rarr;</span>
+                    </Link>
+                  </div>
+                </div>
+              ))}
             </div>
-            <h3 className="font-serif text-xl font-semibold text-[#1C1C1E] mb-1.5">
-              Your Workspace is Fresh & Ready
-            </h3>
-            <p className="text-xs text-[#736E65] max-w-md mb-6 leading-relaxed">
-              No documents, whiteboards, or tasks created yet. Choose a workspace above or click below to start building your second brain.
-            </p>
-            <div className="flex flex-wrap items-center justify-center gap-3">
-              <Link
-                href="/dashboard/document"
-                className="px-4 py-2 rounded-[10px] bg-[#007AFF] hover:bg-[#0066d6] text-white text-xs font-semibold shadow-xs transition-transform active:scale-95"
-              >
-                + Create Document
-              </Link>
-              <Link
-                href="/dashboard/whiteboard"
-                className="px-4 py-2 rounded-[10px] bg-white border border-[#E5E0D5] hover:bg-[#F2F2F7] text-[#1C1C1E] text-xs font-semibold shadow-2xs transition-colors"
-              >
-                + New Whiteboard
-              </Link>
-              <Link
-                href="/dashboard/kanban"
-                className="px-4 py-2 rounded-[10px] bg-[#F0EFFF] hover:bg-[#E2DEFF] text-[#5856D6] text-xs font-semibold transition-colors"
-              >
-                + New Task
-              </Link>
-              <Link
-                href="/dashboard/study"
-                className="px-4 py-2 rounded-[10px] bg-[#E9EFE9] hover:bg-[#D5E3D5] text-[#1E3A2B] text-xs font-semibold transition-colors"
-              >
-                Open Study Space
-              </Link>
+          ) : (
+            <div className="bg-white border border-[#E5E0D5] rounded-2xl p-8 sm:p-10 shadow-xs flex flex-col items-center justify-center text-center">
+              <div className="w-14 h-14 rounded-2xl bg-[#FAF7F2] border border-[#E5E0D5] flex items-center justify-center text-[#1E3A2B] shadow-2xs mb-4">
+                <svg className="w-7 h-7" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.5">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" />
+                </svg>
+              </div>
+              <h3 className="font-serif text-xl font-semibold text-[#1C1C1E] mb-1.5">
+                Your Workspace is Fresh & Ready
+              </h3>
+              <p className="text-xs text-[#736E65] max-w-md mb-6 leading-relaxed">
+                No documents, whiteboards, or tasks created yet. Choose a workspace above or click below to start building your second brain.
+              </p>
+              <div className="flex flex-wrap items-center justify-center gap-3">
+                <Link
+                  href="/dashboard/document"
+                  className="px-4 py-2 rounded-[10px] bg-[#007AFF] hover:bg-[#0066d6] text-white text-xs font-semibold shadow-xs transition-transform active:scale-95"
+                >
+                  + Create Document
+                </Link>
+                <Link
+                  href="/dashboard/whiteboard"
+                  className="px-4 py-2 rounded-[10px] bg-white border border-[#E5E0D5] hover:bg-[#F2F2F7] text-[#1C1C1E] text-xs font-semibold shadow-2xs transition-colors"
+                >
+                  + New Whiteboard
+                </Link>
+                <Link
+                  href="/dashboard/kanban"
+                  className="px-4 py-2 rounded-[10px] bg-[#F0EFFF] hover:bg-[#E2DEFF] text-[#5856D6] text-xs font-semibold transition-colors"
+                >
+                  + New Task
+                </Link>
+                <Link
+                  href="/dashboard/study"
+                  className="px-4 py-2 rounded-[10px] bg-[#E9EFE9] hover:bg-[#D5E3D5] text-[#1E3A2B] text-xs font-semibold transition-colors"
+                >
+                  Open Study Space
+                </Link>
+              </div>
             </div>
-          </div>
+          )}
         </main>
       </div>
     </div>

@@ -74,9 +74,13 @@ export default function DocumentPage() {
       if (saved) {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed) && parsed.length > 0) {
+          const urlParams = new URLSearchParams(window.location.search);
+          const targetId = urlParams.get("id");
+          const found = targetId ? parsed.find((d: DocumentNote) => d.id === targetId) : null;
+
           startTransition(() => {
             setDocs(parsed);
-            setSelectedId(parsed[0].id);
+            setSelectedId(found ? found.id : parsed[0].id);
           });
         }
       }
